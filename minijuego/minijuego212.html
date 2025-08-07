@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>212</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        body { margin: 0; overflow: hidden; background: #e0f7fa; text-align: center; font-family: 'Press Start 2P', cursive; }
+        canvas { display: block; margin: 0 auto; background: #b2ebf2; }
+    </style>
+</head>
+<body>
+    <h1>Busca el poke, el tako y el açaí para una sorpresa!</h1>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        const baseWidth = 800;
+        const baseHeight = 400;
+        let scaleFactor = 1;
+
+        const player = { x: 50, y: 300, width: 30, height: 30, color: "#ff4081", dx: 0, dy: 0, onGround: false };
+        const gravity = 0.8;
+        const jumpPower = -12;
+        const moveSpeed = 5;
+
+        const particles = [];
+        let gameStarted = false;
+
+        // const collectSound = new Audio('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3');
+        // const winSound = new Audio('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3');
+
+        const platforms = [
+            { x: 0, y: 370, width: 800, height: 30 },
+            { x: 150, y: 300, width: 100, height: 10 },
+            { x: 300, y: 250, width: 100, height: 10 },
+            { x: 450, y: 300, width: 100, height: 10 },
+            { x: 600, y: 230, width: 100, height: 10 },
+            { x: 450, y: 150, width: 100, height: 10 },
+        ];
+
+        const items = [
+            { x: 200, y: 250, width: 24, height: 24, emoji: "🥗", name: "poke", collected: false, type: "food" },
+            { x: 650, y: 170, width: 24, height: 24, emoji: "🌮", name: "taco", collected: false, type: "food" },
+            { x: 500, y: 80, width: 24, height: 24, emoji: "🫐", name: "acai", collected: false, type: "food" },
+            { x: 320, y: 80, width: 24, height: 24, emoji: "🎟️", name: "entradas", collected: false, type: "ticket", isHidden: true, dx: -3, dy: 3 }
+        ];
+
+        let keys = {};
+        let foodItemsCollected = 0;
+        let textAlpha = 1;
+        let fadingOut = true;
+
+        let audioInitialized = false;
+        const isMobile = 'ontouchstart' in window;
+
+        // ⭐ Nuevas variables para el control de movimiento táctil
+        let touches = {};
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight - document.querySelector('h1').offsetHeight;
+            scaleFactor = Math.min(canvas.width / baseWidth, canvas.height / baseHeight);
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // function initAudio() {
+        //     if (!audioInitialized) {
+        //         collectSound.play();
+        //         collectSound.pause();
+        //         winSound.play();
+        //         winSound.pause();
+        //         audioInitialized = true;
+        //     }
+        // }
+
+        document.addEventListener("keydown", e => {
+            keys[e.code] = true;
+            if (e.code === "Space" && !gameStarted) {
+                gameStarted = true;
+                // initAudio();
+            }
+        });
+        document.addEventListener("keyup", e => keys[e.code] = false);
+
+        // ⭐ Eventos táctiles mejorados
+        canvas.addEventListener('touchstart', e => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            if (!gameStarted) {
+                gameStarted = true;
+                // initAudio();
+            }
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const touch = e.changedTouches[i];
+                touches[touch.identifier] = {
+                    x: (touch.clientX - rect.left) / scaleFactor,
+                    y: (touch.clientY - rect.top) / scaleFactor
+                };
+            }
+        });
+
+        canvas.addEventListener('touchmove', e => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const touch = e.changedTouches[i];
+                if (touches[touch.identifier]) {
+                    touches[touch.identifier] = {
+                        x: (touch.clientX - rect.left) / scaleFactor,
+                        y: (touch.clientY - rect.top) / scaleFactor
+                    };
+                }
+            }
+        });
+        
+        canvas.addEventListener('touchend', e => {
+            e.preventDefault();
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const touch = e.changedTouches[i];
+                delete touches[touch.identifier];
+            }
+        });
+        
+        function createParticles(x, y, count, color) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    size: Math.random() * 5 + 1,
+                    speedX: (Math.random() - 0.5) * 5,
+                    speedY: (Math.random() - 0.5) * 5,
+                    alpha: 1,
+                    color: color
+                });
+            }
+        }
+
+        function moveLoopItem(item) {
+            if (item.name === "entradas" && !item.collected && !item.isHidden) {
+                item.x += item.dx;
+                item.y += item.dy;
+                if (item.x <= 0 || item.x + item.width >= baseWidth) {
+                    item.dx *= -1;
+                }
+                if (item.y <= 0 || item.y + item.height >= baseHeight) {
+                    item.dy *= -1;
+                }
+            }
+        }
+
+        function update() {
+            if (gameStarted) {
+                player.dx = 0;
+                let isTouchingLeft = false;
+                let isTouchingRight = false;
+                let isTouchingJump = false;
+
+                // ⭐ Recorre todos los toques activos
+                for (const id in touches) {
+                    const touch = touches[id];
+                    if (touch.x < baseWidth / 3) {
+                        isTouchingLeft = true;
+                    } else if (touch.x > (baseWidth / 3) * 2) {
+                        isTouchingRight = true;
+                    } else {
+                        isTouchingJump = true;
+                    }
+                }
+
+                if (keys["ArrowLeft"] || isTouchingLeft) player.dx = -moveSpeed;
+                if (keys["ArrowRight"] || isTouchingRight) player.dx = moveSpeed;
+
+                if ((keys["Space"] || isTouchingJump) && player.onGround) {
+                    player.dy = jumpPower;
+                    player.onGround = false;
+                    createParticles(player.x + player.width / 2, player.y + player.height, 10, player.color);
+                }
+
+                player.dy += gravity;
+                player.x += player.dx;
+                player.y += player.dy;
+
+                if (player.x < 0) {
+                    player.x = 0;
+                }
+                if (player.x + player.width > baseWidth) {
+                    player.x = baseWidth - player.width;
+                }
+                if (player.y < 0) {
+                    player.y = 0;
+                    player.dy = 0;
+                }
+
+                player.onGround = false;
+                for (let p of platforms) {
+                    if (player.x < p.x + p.width && player.x + player.width > p.x && player.y < p.y + p.height && player.y + player.height > p.y) {
+                        if (player.dy > 0 && player.y + player.height - player.dy <= p.y) {
+                            player.y = p.y - player.height;
+                            player.dy = 0;
+                            player.onGround = true;
+                        }
+                    }
+                }
+
+                for (let i = items.length - 1; i >= 0; i--) {
+                    let item = items[i];
+                    if (!item.collected) {
+                        moveLoopItem(item);
+                        if (!item.isHidden) {
+                            if (player.x < item.x + item.width && player.x + player.width > item.x && player.y < item.y + item.height && player.y + player.height > item.y) {
+                                item.collected = true;
+
+                                if (item.type === "food") {
+                                    createParticles(item.x, item.y, 20, '#ffffff');
+                                    // collectSound.play();
+                                    foodItemsCollected++;
+                                    if (foodItemsCollected === 3) {
+                                        const ticketItem = items.find(i => i.name === "entradas");
+                                        if (ticketItem) {
+                                            ticketItem.isHidden = false;
+                                        }
+                                    }
+                                } else if (item.type === "ticket") {
+                                    // winSound.play();
+                                    createParticles(item.x, item.y, 100, '#ffd700');
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.speedX;
+                p.y += p.speedY;
+                p.alpha -= 0.02;
+                p.size -= 0.1;
+                if (p.alpha <= 0 || p.size <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+
+            const ticketsItem = items.find(i => i.name === "entradas");
+            if (ticketsItem && ticketsItem.collected) {
+                if (fadingOut) {
+                    textAlpha -= 0.02;
+                    if (textAlpha <= 0.2) {
+                        fadingOut = false;
+                    }
+                } else {
+                    textAlpha += 0.02;
+                    if (textAlpha >= 1) {
+                        fadingOut = true;
+                    }
+                }
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            ctx.scale(scaleFactor, scaleFactor);
+
+            const skyGradient = ctx.createLinearGradient(0, 0, 0, baseHeight);
+            skyGradient.addColorStop(0, "#87ceeb");
+            skyGradient.addColorStop(1, "#f0f8ff");
+            ctx.fillStyle = skyGradient;
+            ctx.fillRect(0, 0, baseWidth, baseHeight);
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+            ctx.shadowBlur = 8;
+            ctx.shadowOffsetX = 4;
+            ctx.shadowOffsetY = 4;
+            for (let p of platforms) {
+                ctx.fillStyle = "#4db6ac";
+                ctx.fillRect(p.x, p.y, p.width, p.height);
+            }
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+            ctx.shadowBlur = 10;
+            ctx.shadowOffsetX = 5;
+            ctx.shadowOffsetY = 5;
+            ctx.fillStyle = player.color;
+            ctx.fillRect(player.x, player.y, player.width, player.height);
+            ctx.shadowBlur = 0;
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = 0;
+            for (const p of particles) {
+                ctx.beginPath();
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = p.alpha;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+                ctx.globalAlpha = 1;
+                ctx.closePath();
+            }
+            ctx.font = "24px 'Press Start 2P'";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "top";
+            for (let item of items) {
+                if (!item.collected && !item.isHidden) {
+                    ctx.fillText(item.emoji, item.x, item.y);
+                }
+            }
+            ctx.font = "18px 'Press Start 2P'";
+            const ticketsItem = items.find(i => i.name === "entradas");
+            if (ticketsItem && ticketsItem.collected) {
+                ctx.globalAlpha = textAlpha;
+                ctx.fillStyle = "#00695c";
+                ctx.fillText("212 dame las entradas, porfi 🥺 ", baseWidth / 2, 50);
+                // ⭐ Dibuja la segunda línea del texto con un salto de 30px
+                ctx.fillText("(@karelix.abo)", baseWidth / 2, 80);                
+                ctx.globalAlpha = 1;
+            } else if (foodItemsCollected === 3) {
+                ctx.fillStyle = "#00695c";
+                ctx.fillText("¡Persigue las entradas!", baseWidth / 2, 50);
+            } else if (!gameStarted) {
+                ctx.fillStyle = "#00695c";
+                ctx.fillText("Presiona espacio o toca para comenzar", baseWidth / 2, 50);
+            }
+            ctx.restore();
+        }
+
+        function loop() {
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        loop();
+    </script>
+</body>
+</html>
